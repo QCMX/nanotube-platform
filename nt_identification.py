@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Oct 25 11:16:28 2022
-
-@author: sa
-
-Identifies possible chiralities for a given list of peaks 
-in a fixed measurement window, based on kataura predictions, 
-then compares with the experimental data from 
+Identifies possible chiralities for a given list of peaks
+in a fixed measurement window, based on Kataura predictions,
+or experimental data from
 https://doi.org/10.1038/nnano.2012.52
 
+@author: sa
 """
-
+import os
 import numpy as np
 import pandas as pd
 
-data_exp_df = pd.read_csv('./References/Kaihui Liu.csv', index_col=0)
-main_peak_factor = 5
-data_kataura_df = pd.read_csv('./References/Kataura.csv', sep=';')
+
+# Load tables from CSV files
+data_exp_df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kaihui Liu.csv'), index_col=0)
+data_kataura_df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kataura.csv'), sep=';')
 
 
 def read_exp_transitions(n,m):
@@ -27,13 +25,10 @@ def read_exp_transitions(n,m):
     ----------
     n,m : integers
         NT chirality.
-    transition_data : dataframe
-        datafile of experimental data.
 
-    Returns a list
+    Returns
     -------
-    None.
-
+    A list of transition energies in eV.
     '''
     p=n-m
     if n>=36:
@@ -48,21 +43,20 @@ def read_exp_transitions(n,m):
             pass
     return transitions
 
+
 def read_kataura_transitions(n,m):
     '''
-    Reads the experimental values for a certain (n,m) chirality
+    Reads the theoretical values for a certain (n,m) chirality
 
     Parameters
     ----------
     n,m : integers
         NT chirality.
-    transition_data : dataframe
-        datafile of kataura plot.
 
-    Returns a list, an empty list if the chirality doesn't exist in the table
+    Returns
     -------
-    None.
-
+    A list of transition energies in eV or
+    an empty list if the chirality doesn't exist in the table.
     '''
     transitions = []
     df = data_kataura_df
@@ -79,7 +73,8 @@ def read_kataura_transitions(n,m):
             pass
     return transitions
 
-def is_in_list(t,l,delta=0.05):
+
+def is_in_list(t, l, delta=0.05):
     '''
     Verifies that a transition exists in a list of peaks
 
@@ -92,19 +87,21 @@ def is_in_list(t,l,delta=0.05):
     delta : float, optional
         Uncertainty of the position of the peak. The default is 0.02.
 
-    Returns boolean
+    Returns
     -------
-    None.
-
+    boolean
     '''
     for peak in l:
-        if np.round(np.abs(t-peak),3)<=delta:
+        if np.round(np.abs(t-peak), 3) <= delta:
             return True
     return False
 
+
 def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
     '''
-    Identifies possible chiralities for a given list of peaks in a fixed measurement window
+    Identifies possible chiralities for one or two peaks in table of
+    theoretical transitions by Kataura.
+
     Parameters
     ----------
     peak1 : float
@@ -115,13 +112,10 @@ def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
         Uncertainty of the position of the peak compared to the reference data. The default is 0.05.
     d2 : float, optional
         Uncertainty of the position of the peak compared to the reference data. The default is 0.05.
-    ref_data : Dataframe, optional
-        Transition energy table. The default is data_kataura_df.
 
-    Returns list of tuples with the format (n,m)
+    Returns
     -------
-    None.
-
+    list of tuples with the format (n,m)
     '''
     candidates={}
     # candidates_sort={}
@@ -150,10 +144,12 @@ def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
         return list(finalists.values())
     return list(candidates.values())
 
+
 def ntid_th(list_peaks, value_peaks, meas_window=[1.3,2.90], 
             delta=0.1, main_peak_factor=10):
     '''
     Identifies possible chiralities for a given list of peaks in a fixed measurement window, based on kataura predictions
+
     Parameters
     ----------
     list_peaks : list
@@ -167,10 +163,9 @@ def ntid_th(list_peaks, value_peaks, meas_window=[1.3,2.90],
     main_peak_factor : float, optional
         Factor to discard small peaks compared to the main one. The default is 10.
 
-    Returns list of tuples with the format (n,m)
+    Returns
     -------
-    None.
-
+    list of tuples with the format (n,m)
     '''
     finalists=[]
     if len(list_peaks)==0:
@@ -194,6 +189,7 @@ def ntid_th(list_peaks, value_peaks, meas_window=[1.3,2.90],
             if a==0:
                 finalists.append(cd)
     return finalists
+
 
 def ntid_exp(list_peaks, value_peaks, meas_window=[1.3,2.9], 
              delta_th=0.1, delta_exp=0.05, main_peak_factor=10):
@@ -240,6 +236,7 @@ def ntid_exp(list_peaks, value_peaks, meas_window=[1.3,2.9],
         if a==len(list_transitions_exp):
             finalists.append(cd)
     return finalists
+
 
 def string_chirality(n,m):
     if (n-m)%3==0:

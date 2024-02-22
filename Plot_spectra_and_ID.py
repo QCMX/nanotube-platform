@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Oct 25 10:26:41 2022
+Notebook like script (for editors understanding #%% as cell separator)
+for plotting NT spectra.
 
 @author: sa
 """
@@ -12,9 +13,7 @@ import pandas as pd
 from scipy import constants as si
 from scipy.signal import find_peaks
 
-os.chdir('C:/Users/sa/Documents/Data/NT spectra')
-
-import NT_identification as ntid
+import nt_identification as ntid
 
 def candidates(list_peaks, delta_exp=0.05, meas_window=[1.3,2.9]):
     for ch in ntid.ntid_exp(list_peaks, [1,1,1], delta_exp=delta_exp, meas_window=meas_window):
@@ -24,6 +23,7 @@ def candidates(list_peaks, delta_exp=0.05, meas_window=[1.3,2.9]):
         # print(ntid.read_kataura_transitions(n, m))
     return
 
+#%%
 '''load laser spectrum for normalization'''
 
 laser_power = 45
@@ -437,11 +437,3 @@ else:
     
     if savefigure:
         plt.savefig('/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '.png')
-
-
-#%%
-
-
-
-    
-    
