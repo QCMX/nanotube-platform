@@ -1,20 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Identifies possible chiralities for a given list of peaks
-in a fixed measurement window, based on Kataura predictions,
-or experimental data from
-https://doi.org/10.1038/nnano.2012.52
-
-@author: sa
+Identify carbon nanotube chiralities by observed optical transitions.
+Based on data by Kataura and Kaihui Liu et al.
 """
 import os
+import functools
 import numpy as np
 import pandas as pd
-
-
-# Load tables from CSV files
-data_exp_df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kaihui Liu.csv'), index_col=0)
-data_kataura_df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kataura.csv'), sep=';')
 
 
 # Put both datasets into same format
@@ -58,242 +50,137 @@ def load_KaihuiLiu():
     coln = ['n', 'm'] + ['transition%d'%d for d in range(maxntrans)]
     return pd.DataFrame(data, columns=coln)
 
-datth = load_Kataura()
-datexp = load_KaihuiLiu()
+
+# Load tables from CSV files
+data_Kataura = load_Kataura()
+data_KaihuiLiu = load_KaihuiLiu()
 
 
-def read_exp_transitions(n,m):
-    '''
-    Reads the experimental values for a certain (n,m) chirality
+def select_chiralities_matching_any(energies, delta, dataset):
+    """Select rows of dataset that contain one or more of the
+    given transitions energies.
 
-    Parameters
-    ----------
-    n,m : integers
-        NT chirality.
-
-    Returns
-    -------
-    A list of transition energies in eV.
-    '''
-    p=n-m
-    if n>=36:
-        return []
-    x = data_exp_df.at[n,str(p)]
-    raw_list = x.replace('[','').replace(']','').split(' ')
-    transitions = []
-    for t in raw_list:
-        try:
-            transitions.append(float(t))
-        except:
-            pass
-    return transitions
+    Returns view of dataset.
+    """
+    x = [(np.abs(dataset.iloc[:,2:] - energy) <= delta).any(axis=1) for energy in energies]
+    x = functools.reduce(lambda a, b: a | b, x)
+    return dataset.loc[x]
 
 
-def read_kataura_transitions(n,m):
-    '''
-    Reads the theoretical values for a certain (n,m) chirality
+def select_chiralities_matching_all(energies, delta, window, dataset):
+    """Select rows of dataset where all tabulated transitions in the
+    window are also listed in observed `energies`.
 
     Parameters
     ----------
-    n,m : integers
-        NT chirality.
+    energies : list of float
+        List of observed transition energies.
+    delta : float
+        Maximum deviation from tabulated transitions.
+    window : 2-tuple of float
+        Observation window.
+    dataset : TYPE
+        DataFrame of tabulated transitions.
 
     Returns
     -------
-    A list of transition energies in eV or
-    an empty list if the chirality doesn't exist in the table.
-    '''
-    transitions = []
-    df = data_kataura_df
-    try:
-        T = df.loc[(df.n==n) & (df.m==m)].iloc[:,-6:].values[0]
-    except:
-        return transitions
-
-    for t in T:
-        try:
-            e = float(t.replace(',','.'))
-            transitions.append(e)
-        except:
-            pass
-    return transitions
+    DataFrame
+        view of matching transitions.
+    """
+    # True for transitions in window
+    inwindow = (dataset.iloc[:,2:] > window[0]) & (dataset.iloc[:,2:] < window[1])
+    # True for rows with no transitions in window
+    alloutofwindow = (~inwindow).all(axis=1)
+    # For each energy: True for transitions close to energy or out of window
+    x = [(np.abs(dataset.iloc[:,2:] - energy) <= delta) | ~inwindow for energy in energies]
+    # True for transitions close to any energy or out of window
+    x = functools.reduce(lambda a, b: a | b, x)
+    # True for rows with all transitions close to one energy or out of window
+    x = x.all(axis=1) & (~alloutofwindow)
+    return dataset.loc[x]
 
 
-def is_in_list(t, l, delta=0.05):
-    '''
-    Verifies that a transition exists in a list of peaks
+def transitions_in_other_table(first, second):
+    """Select rows of second table with (n,m) appearing in first table.
+
+    Does not complain if (n,m) of first table doesn't appear in second one.
+
+    Returns view of `second` DataFrame.
+    """
+    # Using multiindex: faster and conserves order of first table
+    return first[['n','m']].set_index(['n', 'm']).join(second.set_index(['n', 'm'])).reset_index()
+    # # Using masks:
+    # x = [(second['n']==row['n']) & (second['m']==row['m']) for _, row in first.iterrows()]
+    # x = functools.reduce(lambda a, b: a | b, x)
+    # return second[x]
+
+
+def get_tabulated_th(dfnm):
+    return transitions_in_other_table(dfnm, data_Kataura)
+
+
+def get_tabulated_exp(dfnm):
+    return transitions_in_other_table(dfnm, data_KaihuiLiu)
+
+
+def nt_id(energies, intensities, delta_th, delta_exp, window, main_peak_factor):
+    """Composite nanotube identification:
+
+    Disregard peaks smaller than main_peak_factor compared to first peak.
+    Select expected theoretical chiralities (Kataura) where all transitions in the
+    measurement window are also in the observed peak energies.
+    Of these select only those where no other transitions are expected
+    expected based on Kaihui Liu et al.
+
+    Changed to Samy's original algorithm: take more than at most two peaks into account.
+
+    Sort by first unmatched peak of decreasing intensity.
+    At lower priority sort by closeness to matched peaks (compared to Kaihui Liu et al.).
 
     Parameters
     ----------
-    t : float
-        transition.
-    l : list
-        list of peaks.
-    delta : float, optional
-        Uncertainty of the position of the peak. The default is 0.02.
+    energies : list of floats
+        Observed peak positions.
+    intensities : list of floats
+        Observed peak intensities.
+    delta_th : float
+        Maximum deviation from tabulated theoretical transitions (Kataura).
+    delta_exp : float
+        Maximum deviation from tabulated experimental transitions (Kaihui Liu).
+    window : 2-tuple of floats
+        Lower and upper bound of measurement window
+    main_peak_factor : TYPE
+        Disregards peaks smaller, relative to main peak, than this factor.
 
     Returns
     -------
-    boolean
-    '''
-    for peak in l:
-        if np.round(np.abs(t-peak), 3) <= delta:
-            return True
-    return False
+    DataFrame with columns n, m.
+    """
+    energies, intensities = np.array(energies), np.array(intensities)
+    # Sort by intensity, descending
+    s = np.argsort(intensities)[::-1]
+    energies, intensities = energies[s], intensities[s]
 
+    # Discard small peaks
+    mask = (intensities[0] / intensities) < main_peak_factor
+    energies, intensities = energies[mask], intensities[mask]
 
-def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
-    '''Selects chiralities from Kataura plot with transitions matching each
-    peak (or only the first if peak2 is None).
+    candidates = select_chiralities_matching_all(energies, delta_th, window, data_Kataura)
+    candidates = transitions_in_other_table(candidates, data_KaihuiLiu)
+    candidates = select_chiralities_matching_all(energies, delta_exp, window, candidates)
 
-    Parameters
-    ----------
-    peak1 : float
-        Value of the first peak.
-    peak2 : float, optional
-        Value of the second peak
-    d1 : float, optional
-        Uncertainty of the position of the peak compared to the reference data. The default is 0.05.
-    d2 : float, optional
-        Uncertainty of the position of the peak compared to the reference data. The default is 0.05.
+    # Sort results
+    def sortbadness(row):
+        ts = row.iloc[2:]
+        unmatchedbadness, dist = 0, []
+        for i, energy in enumerate(energies):
+            d = np.min(np.abs(ts - energy))
+            if d <= delta_exp:
+                dist.append(d)
+            elif unmatchedbadness == 0:
+                unmatchedbadness = len(energies)-i
+        return np.sum(dist)/len(dist) + unmatchedbadness*1e6
+    candidates['sortbadness'] = candidates.apply(sortbadness, axis=1)
+    candidates = candidates.sort_values('sortbadness')
 
-    Returns
-    -------
-    list of tuples with the format (n,m)
-    '''
-    candidates={}
-    # candidates_sort={}
-    a=0
-    list_n, list_m = np.sort(data_kataura_df.n.unique()), np.sort(data_kataura_df.m.unique())
-    for n in list_n:
-        for m in list_m:
-            for t in read_kataura_transitions(n,m):
-                if np.round(np.abs(t-peak1),3)<=d1:
-                    candidates[a] = (n,int(m))
-            a+=1
-    
-    if peak2 is not None:
-        finalists={}
-        # finalists_sort={}
-        a=0
-        list_candidates = list(candidates.values())
-        for candidate in list_candidates:
-            (n,m)=candidate
-            transitions = read_kataura_transitions(n, m)
-            for t in transitions:
-                if np.round(np.abs(t-peak2),3)<=d2:
-                    finalists[a] = (n,m)
-            a+=1            
-
-        return list(finalists.values())
-    return list(candidates.values())
-
-
-def ntid_th(list_peaks, value_peaks, meas_window=[1.3,2.90], 
-            delta=0.1, main_peak_factor=10):
-    '''
-    Identifies possible chiralities for a given list of peaks in
-    a fixed measurement window, based on Kataura predictions.
-
-    Uses only the first two peaks. Uses only the first peak if the second is
-    smaller than main_peak_factor compared to the first.
-
-    Requires no other peaks to be predicted in meas_window.
-
-    Parameters
-    ----------
-    list_peaks : list
-        List of peaks detected in a spectrum, sorted by maximum value.
-    value_peaks : list
-        List of the intensities of the peaks, in the same order
-    meas_window : list, optional
-        Measurement window of the spectrum, in eV. The default is [1.25,3.00].
-    delta : float, optional
-        Uncertainty of the position of the peak compared to the reference data. The default is 0.05.
-    main_peak_factor : float, optional
-        Factor to discard small peaks compared to the main one. The default is 10.
-
-    Returns
-    -------
-    list of tuples with the format (n,m)
-    '''
-    finalists=[]
-    if len(list_peaks)==0:
-        return finalists
-    elif len(list_peaks)==1 or value_peaks[0]>main_peak_factor*value_peaks[1]:
-        candidates = ntid2(list_peaks[0],d1=delta)
-        # Only accept candidate if all expected transitions match a peak in the data
-        for cd in candidates:
-            a=0
-            for transition in read_kataura_transitions(cd[0],cd[1]):
-                if transition>=meas_window[0] and transition<=meas_window[1] and np.abs(transition-list_peaks[0])>delta:
-                    a=1
-            if a==0:
-                finalists.append(cd)
-    else:
-        candidates = ntid2(peak1=list_peaks[0], peak2=list_peaks[1], d1=delta, d2=delta)
-        # Only accept candidate if all transitions match a peak in the data
-        for cd in candidates:
-            a=0
-            for transition in read_kataura_transitions(cd[0],cd[1]):
-                if transition>=meas_window[0] and transition<=meas_window[1] and not is_in_list(transition, list_peaks, delta=delta):
-                    a=1
-            if a==0:
-                finalists.append(cd)
-    return finalists
-
-
-def ntid_exp(list_peaks, value_peaks, meas_window=[1.3,2.9], 
-             delta_th=0.1, delta_exp=0.05, main_peak_factor=10):
-    '''
-    Identifies possible chiralities for a given list of peaks 
-    in a fixed measurement window, based on kataura predictions, 
-    then compares with the experimental data from 
-    https://doi.org/10.1038/nnano.2012.52
-
-    Parameters
-    ----------
-    list_peaks : list
-        List of peaks detected in a spectrum, sorted by maximum value.
-    value_peaks : list
-        List of the intensities of the peaks, in the same order
-    meas_window : list, optional
-        Measurement window of the spectrum, in eV. The default is [1.3,2.9].
-    delta_th : float, optional
-        Uncertainty on the position of the peak compared to the theoretical
-        predictions from the kataura plot. The default is 0.1.
-    delta_exp : float, optional
-        Uncertainty on the position of the peak compared to the experimental
-        data. The default is 0.05.
-    main_peak_factor : float, optional
-        Factor to discard small peaks compared to the main one. The default is 10.
-
-    Returns
-    -------
-    finalists : list of tuples with the format (n,m).
-
-    '''
-   
-    candidates = ntid_th(list_peaks, value_peaks, 
-                           meas_window=meas_window, 
-                           delta=delta_th, main_peak_factor=main_peak_factor)
-    finalists=[]
-       
-    for cd in candidates:
-        # check that all expected transitions that are in measurement window
-        # also appear as peak in the data
-        a=0
-        list_transitions_exp = list(dict.fromkeys(read_exp_transitions(cd[0], cd[1])))
-        for transition in list_transitions_exp:
-            if transition<=meas_window[0] or transition>=meas_window[1] or is_in_list(transition, list_peaks, delta=delta_exp):
-                a+=1
-        if a==len(list_transitions_exp):
-            finalists.append(cd)
-    return finalists
-
-
-def string_chirality(n,m):
-    if (n-m)%3==0:
-        return('M({},{})'.format(n,m))
-    else:
-        return('S({},{})'.format(n,m))
+    return candidates[['n', 'm']]

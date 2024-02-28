@@ -2,438 +2,155 @@
 """
 Notebook like script (for editors understanding #%% as cell separator)
 for plotting NT spectra.
-
-@author: sa
 """
 #%%
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import pandas as pd
 from scipy import constants as si
 from scipy.signal import find_peaks
 
 import nt_identification as ntid
 
-def candidates(list_peaks, delta_exp=0.05, meas_window=[1.3,2.9]):
-    for ch in ntid.ntid_exp(list_peaks, [1,1,1], delta_exp=delta_exp, meas_window=meas_window):
-        n,m=ch[0],ch[1]
-        print(ntid.string_chirality(ch[0],ch[1]) + ' : EXP (' + str(ntid.read_exp_transitions(n, m)) + ') ; KAT (' + str(ntid.read_kataura_transitions(n, m)) + ')')
-        # print(ntid.read_exp_transitions(n, m))      
-        # print(ntid.read_kataura_transitions(n, m))
-    return
-
 #%%
-'''load laser spectrum for normalization'''
+# Load laser spectrum for normalization
 
-laser_power = 45
-IR_att = 40
-
+LASER_CALIBRATION_FILES = '../220617 laser calibration/220622/data_laser/'
+laser_power = 45 # percent
+IR_att = 40 # dB
 background_intensity = 550
 
-data_laser_path = 'C:/Users/sa/Documents/Data/NT spectra/Laser calibration/220617 laser calibration/220617 laser calibration/220622/data_laser/'
-prefixed = [filename for filename in os.listdir(data_laser_path) if filename.startswith('P{p}_{ir}'.format(p=laser_power, ir=IR_att))]
-data_file_laser = data_laser_path + prefixed[0]
-data_laser = np.genfromtxt(data_file_laser, delimiter=',').T
+# Search for calibration corresponding to laser settings
+fnamematches = [
+    filename for filename in os.listdir(LASER_CALIBRATION_FILES)
+    if filename.startswith(f'P{laser_power:d}_{IR_att:d}')]
+assert len(fnamematches) == 1, "Need to match exactly one calibration file"
+calibrationpath = os.path.join(LASER_CALIBRATION_FILES, fnamematches[0])
 
+# Load spectrum
+data_laser = np.genfromtxt(calibrationpath, delimiter=',').T
 lambdas_laser = data_laser[0]
 intensities_laser = data_laser[1] - background_intensity
 
 #%%
-'''plot single file from full sensor data'''
 
-data_NT_path = 'Growth/20231103_G56/P45_4s_G56_B86_NT12_1d506 2023-11-03 17_48_40.csv'
-filename = data_NT_path.split('/')[-1].split('.')[0]
-data_NT = np.genfromtxt(data_NT_path, delimiter=',').T
-
-plot_full = False
-identify = True
-savefigure = False
-normalize = False
-
-'''integration region definition'''
-width_integration = 60
-start_roi_back, start_roi_NT = 0, 320
-ROI_back = (start_roi_back, start_roi_back + width_integration)
-ROI_NT = (start_roi_NT, start_roi_NT + width_integration)
-
-'''identifying parameters definition'''
-peak_width = 20
-delta_th, delta_exp = 0.1, 0.05
-main_peak_factor = 10
-
-lambdas_NT = data_NT[0][0:1340]
-
-if normalize:
-    assert np.abs(lambdas_NT[0] - lambdas_laser[0]) <= 1., "Laser spectrum window doesn\'t match the data spectrum window"
-
-energies = si.h*si.c/(lambdas_NT*1.e-9*si.e)
-intensities = np.array([data_NT[1][1340*i:1340*(i+1)] for i in range(len(data_NT[0])//1340)])
-
-if plot_full:
-    fig,ax = plt.subplots(figsize=(10,5))
-    ax.imshow(intensities)
-    plt.title('Full spectrum, not normalized')
-    plt.tight_layout()
-
-else:
-    fig, ax = plt.subplots(figsize=(10,5))
-    ax.set_xlabel('Energy [eV]')
-    fig.suptitle(filename)
-    d = np.sum(intensities[ROI_NT[0]:ROI_NT[1],:],axis=0) - np.sum(intensities[ROI_back[0]:ROI_back[1],:],axis=0)
-        
-    if not identify:   
-        if normalize:
-            ax.set_ylabel('Normalized intensity [a.u.]')
-            ax.plot(energies, d/intensities_laser, ms=3., c='k')
-        else:
-            ax.set_ylabel('Intensity [counts]')
-            ax.plot(energies, d, ms=3., c='k')
-        plt.tight_layout()    
-        
+def string_chirality(n,m):
+    """Make string describing chirality."""
+    if (n-m)%3 == 0:
+        return 'M({},{})'.format(n,m)
     else:
-        if normalize:
-            d = d/intensities_laser
-            
-        peaks_ind = find_peaks(d, width=peak_width)[0]
-        xpeaks, ypeaks = energies[peaks_ind], d[peaks_ind]
-        order = np.argsort(ypeaks)[::-1]
-        xpeaks_round = np.round(xpeaks,2)
-        id_peaks = ntid.ntid_exp(list_peaks=xpeaks_round[order], value_peaks = ypeaks[order], meas_window=[np.min(energies)+0.1,np.max(energies)-0.1], 
-                            delta_th=delta_th, delta_exp=delta_exp,main_peak_factor=main_peak_factor)
-        
-        for xpeak, ypeak in zip(xpeaks[order], ypeaks[order]):
-            ax.plot([xpeak, xpeak], [0, ypeak], 'r--', label='{:.2f} {}'.format(xpeak, 'eV'))
-            leg = ax.legend(title='Peaks positions:', handlelength=0, handletextpad=0, fancybox=True)
-            for item in leg.legendHandles:
-                item.set_visible(False)
-                
-        text_chiralities=''
-        for ch in id_peaks:
-            text_chiralities+=ntid.string_chirality(ch[0],ch[1])
-            
-        ax.set_title('Possible Chiralities: ' + text_chiralities)
-        if normalize:
-            ax.set_ylabel('Normalized intensity [a.u.]')
-        else:
-            ax.set_ylabel('Intensity [counts]')
-        ax.plot(energies, d, ms=3., c='k')            
-        plt.tight_layout()
-    
-    if savefigure:
-        if normalize:
-            plt.savefig('/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '_N.png')
-        else:
-            plt.savefig('/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '.png')
-        
+        return 'S({},{})'.format(n,m)
 
-#%%
+def plot_overview(
+        filepath,
+        roi_background_rows = slice(0, 60),
+        roi_nt_rows=slice(320, 380),
+        meas_window = (1.3, 2.7), # eV
+        peak_width=20, # samples
+        main_peak_factor=5,
+        delta_exp=0.05, delta_th=0.1,
+        savepath=None):
+    filename = os.path.basename(filepath)
+    filedata = np.genfromtxt(filepath, delimiter=',')
+    assert filedata.shape[0] % 1340 == 0
 
-'''plot all files from full sensor data'''
+    lambdas = filedata[:1340,0] # nm
+    energies = si.h*si.c/(lambdas*1.e-9*si.e) # eV
+    counts = filedata[:,1].reshape((-1, 1340))
+    assert np.allclose(lambdas, lambdas_laser), "Data wavelengths needs to match laser ref"
 
-plot_full = False
-identify = True
-savefigure = True
+    bkg = np.sum(counts[roi_background_rows], axis=0)
+    spectrum = np.sum(counts[roi_nt_rows], axis=0) - bkg
+    normalized = spectrum / intensities_laser
 
-files = []
-folder = 'Growth/20231103_G56'
-for (dirpath, dirnames, filenames) in os.walk(folder):
-    files.extend(filenames)
-    break
+    # Find peaks & identify
+    peaks_ind = find_peaks(normalized, width=peak_width)[0]
+    xpeaks, ypeaks = energies[peaks_ind], normalized[peaks_ind]
 
-for f in files:
-    if '.csv' in f and 'Roi' not in f:
-        data_NT_path = folder + '/' + f
-        filename = data_NT_path.split('/')[-1].split('.')[0]
-        data_NT = np.genfromtxt(data_NT_path, delimiter=',').T
-
-        '''integration region definition'''
-        width_integration = 60
-        start_roi_back, start_roi_NT = 0, 320
-        ROI_back = (start_roi_back, start_roi_back + width_integration)
-        ROI_NT = (start_roi_NT, start_roi_NT + width_integration)
-
-        '''identifying parameters definition'''
-        peak_width = 20
-        delta_th, delta_exp = 0.1, 0.02
-        main_peak_factor = 10
-        
-        normalize = True
-        lambdas_NT = data_NT[0][0:1340]
-
-        energies = si.h*si.c/(lambdas_NT*1.e-9*si.e)
-        intensities = np.array([data_NT[1][1340*i:1340*(i+1)] for i in range(len(data_NT[0])//1340)])
-
-        if plot_full:
-            fig,ax = plt.subplots(figsize=(10,5))
-            ax.imshow(intensities)
-            plt.title('Full spectrum, not normalized')
-            plt.tight_layout()
-
-        else:
-            fig,ax = plt.subplots(figsize=(10,5))
-            ax.set_xlabel('Energy [eV]')
-            fig.suptitle(filename)
-            d = np.sum(intensities[ROI_NT[0]:ROI_NT[1],:],axis=0) - np.sum(intensities[ROI_back[0]:ROI_back[1],:],axis=0)
-                
-            if not identify:   
-                ax.set_ylabel('Intensity [counts]')
-                ax.plot(energies, d, ms=3., c='k')
-                plt.tight_layout()    
-                
-            else:                    
-                peaks_ind = find_peaks(d, width=peak_width)[0]
-                xpeaks, ypeaks = energies[peaks_ind], d[peaks_ind]
-                order = np.argsort(ypeaks)[::-1]
-                xpeaks_round = np.round(xpeaks,2)
-                id_peaks = ntid.ntid_exp(list_peaks=xpeaks_round[order], value_peaks = ypeaks[order], meas_window=[np.min(energies)+0.1,np.max(energies)-0.1], 
-                                    delta_th=delta_th, delta_exp=delta_exp,main_peak_factor=main_peak_factor)
-                
-                for xpeak, ypeak in zip(xpeaks[order], ypeaks[order]):
-                    ax.plot([xpeak, xpeak], [0, ypeak], 'r--', label='{:.2f} {}'.format(xpeak, 'eV'))
-                    leg = ax.legend(title='Peaks positions:', handlelength=0, handletextpad=0, fancybox=True)
-                    for item in leg.legendHandles:
-                        item.set_visible(False)
-                        
-                text_chiralities=''
-                for ch in id_peaks:
-                    text_chiralities+=ntid.string_chirality(ch[0],ch[1])
-                    
-                ax.set_title('Possible Chiralities: ' + text_chiralities)
-                ax.set_ylabel('Intensity [counts]')
-                ax.plot(energies, d, ms=3., c='k')            
-                plt.tight_layout()
-            
-            if savefigure:
-                # plt.savefig('/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '.png')
-                folder_raw = '/'.join(data_NT_path.split('/')[:-1]) + '/Raw spectra/'
-                if 'Raw spectra' not in os.listdir('/'.join(data_NT_path.split('/')[:-1])):
-                    os.mkdir(folder_raw)
-                plt.savefig(folder_raw + filename + '.png')
-        plt.close()
-        plt.pause(0.1)
-
-        
-        assert lambdas_NT[0]==lambdas_laser[0], 'Laser spectrum window doesn\'t match the data spectrum window'
-
-        energies = si.h*si.c/(lambdas_NT*1.e-9*si.e)
-        intensities = np.array([data_NT[1][1340*i:1340*(i+1)] for i in range(len(data_NT[0])//1340)])
-
-        if plot_full:
-            fig,ax = plt.subplots(figsize=(10,5))
-            ax.imshow(intensities)
-            plt.title('Full spectrum, not normalized')
-            plt.tight_layout()
-
-        else:
-            fig,ax = plt.subplots(figsize=(10,5))
-            ax.set_xlabel('Energy [eV]')
-            fig.suptitle(filename)
-            d = np.sum(intensities[ROI_NT[0]:ROI_NT[1],:],axis=0) - np.sum(intensities[ROI_back[0]:ROI_back[1],:],axis=0)
-                
-            if not identify:   
-                ax.set_ylabel('Normalized intensity [a.u.]')
-                ax.plot(energies, d/intensities_laser, ms=3., c='k')
-                plt.tight_layout()    
-                
-            else:
-                d = d/intensities_laser
-                    
-                peaks_ind = find_peaks(d, width=peak_width)[0]
-                xpeaks, ypeaks = energies[peaks_ind], d[peaks_ind]
-                order = np.argsort(ypeaks)[::-1]
-                xpeaks_round = np.round(xpeaks,2)
-                id_peaks = ntid.ntid_exp(list_peaks=xpeaks_round[order], value_peaks = ypeaks[order], meas_window=[np.min(energies)+0.1,np.max(energies)-0.1], 
-                                    delta_th=delta_th, delta_exp=delta_exp,main_peak_factor=main_peak_factor)
-                
-                for xpeak, ypeak in zip(xpeaks[order], ypeaks[order]):
-                    ax.plot([xpeak, xpeak], [0, ypeak], 'r--', label='{:.2f} {}'.format(xpeak, 'eV'))
-                    leg = ax.legend(title='Peaks positions:', handlelength=0, handletextpad=0, fancybox=True)
-                    for item in leg.legendHandles:
-                        item.set_visible(False)
-                        
-                text_chiralities=''
-                for ch in id_peaks:
-                    text_chiralities+=ntid.string_chirality(ch[0],ch[1])
-                    
-                ax.set_title('Possible Chiralities: ' + text_chiralities)
-                ax.set_ylabel('Normalized intensity [a.u.]')
-                ax.plot(energies, d, ms=3., c='k')            
-                plt.tight_layout()
-            
-            if savefigure:
-                # print('Saving ' + '/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '_N.png')
-                folder_normalized = '/'.join(data_NT_path.split('/')[:-1]) + '/Normalized spectra/'
-                if 'Normalized spectra' not in os.listdir('/'.join(data_NT_path.split('/')[:-1])):
-                    os.mkdir(folder_normalized)
-                plt.savefig(folder_normalized + filename + '_N.png')
-
-        plt.close()
-        plt.pause(0.1)              
-        
-        
-#%%
-'''plot single file from ROI data'''
-
-data_NT_path = 'Stock/20221024_stock/20221024_stock/G042_CMA51_NT1 2022-10-24 16_33_42-Roi-2.csv'
-data_back_path = 'Stock/20221024_stock/20221024_stock/G042_CMA50_NT5 2022-10-24 16_27_04-Roi-3.csv'
-filename = data_NT_path.split('/')[-1].split('.')[0]
-filename_back = data_back_path.split('/')[-1].split('.')[0]
-data_NT = np.genfromtxt(data_NT_path, delimiter=',').T
-data_back = np.genfromtxt(data_back_path, delimiter=',').T
-
-normalize = False
-identify = False
-savefigure = False
-
-
-'''identifying parameters definition'''
-peak_width = 10
-delta_th, delta_exp = 0.1, 0.02
-main_peak_factor = 10
-
-lambdas_NT = data_NT[0]
-
-if normalize:
-    assert lambdas_NT[0]==lambdas_laser[0], 'Laser spectrum window doesn\'t match the data spectrum window'
-
-energies = si.h*si.c/(lambdas_NT*1.e-9*si.e)
-intensities = np.array(data_NT[1])
-intensities_back = np.array(data_back[1])
-
-
-fig,ax = plt.subplots(figsize=(10,5))
-ax.set_xlabel('Energy [eV]')
-fig.suptitle(filename)
-d = intensities - intensities_back
-    
-if not identify:   
-    if normalize:
-        ax.set_ylabel('Normalized intensity [a.u.]')
-        ax.plot(energies, d/intensities_laser, '.', ms=3., c='k')
-    else:
-        ax.set_ylabel('Intensity [counts]')
-        ax.plot(energies, d, '.', ms=3., c='k')
-    plt.tight_layout()    
-    
-else:
-    if normalize:
-        d = d/intensities_laser
-        ax.set_ylabel('Normalized intensity [a.u.]')
-    else:
-        ax.set_ylabel('Intensity [a.u.]')
-        
-    peaks_ind = find_peaks(d, width=peak_width)[0]
-    xpeaks, ypeaks = energies[peaks_ind], d[peaks_ind]
     order = np.argsort(ypeaks)[::-1]
-    xpeaks_round = np.round(xpeaks,2)
-    id_peaks = ntid.ntid_exp(list_peaks=xpeaks_round[order], value_peaks = ypeaks[order], meas_window=[np.min(energies)+0.1,np.max(energies)-0.1], 
-                        delta_th=delta_th, delta_exp=delta_exp,main_peak_factor=main_peak_factor)
-    
-    for xpeak, ypeak in zip(xpeaks[order], ypeaks[order]):
-        ax.plot([xpeak, xpeak], [0, ypeak], 'r--', label='{:.2f} {}'.format(xpeak, 'eV'))
-        leg = ax.legend(title='Peaks positions:', handlelength=0, handletextpad=0, fancybox=True)
-        for item in leg.legendHandles:
-            item.set_visible(False)
-            
-    text_chiralities=''
-    for ch in id_peaks:
-        text_chiralities+=ntid.string_chirality(ch[0],ch[1])
-        
-    ax.set_title('Possible Chiralities: ' + text_chiralities)
-    ax.plot(energies, d, '.', ms=3., c='k')            
-    plt.tight_layout()
+    id_peaks = ntid.nt_id(
+        energies=xpeaks[order],
+        intensities=ypeaks[order],
+        delta_th=delta_th, delta_exp=delta_exp,
+        window=meas_window,
+        main_peak_factor=main_peak_factor)
 
-if savefigure:
-    plt.savefig('/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '.png')
+    # Plot
+    fig = plt.figure(layout='constrained', figsize=(10, 6))
+    axd = fig.subplot_mosaic(
+        """
+        AC
+        BD
+        """)
+    axd['B'].set_title('Full sensor data')
+    im = axd['B'].imshow(counts, origin='upper', aspect='auto', interpolation='nearest')
+    axd['B'].set_xlabel('detector column')
+    axd['B'].set_ylabel('detector row')
+    axd['B'].axhline(roi_background_rows.start, color='C1', linestyle='--', linewidth=1, label='ROI background')
+    axd['B'].axhline(roi_background_rows.stop, color='C1', linestyle='--', linewidth=1)
+    axd['B'].axhline(roi_nt_rows.start, color='r', linestyle='--', linewidth=1, label='ROI spectrum')
+    axd['B'].axhline(roi_nt_rows.stop, color='r', linestyle='--', linewidth=1)
+    axd['B'].legend(loc='upper right', fontsize=8)
+    fig.colorbar(im, ax=axd['B'], orientation='horizontal', shrink=0.8).set_label('Detector counts', fontsize=8)
+
+    axd['A'].set_title('Raw spectrum')
+    axd['A'].plot(lambdas_laser, intensities_laser/1e3, color='gray', label='laser reference')
+    axd['A'].plot(lambdas, spectrum/1e3, label='nanotube')
+    axd['A'].legend(fontsize=8)
+    axd['A'].set_xlabel('Wavelength / nm')
+    axd['A'].set_ylabel('Detector counts / 1k')
+
+    axd['C'].plot(energies, normalized, linewidth=1)
+    axd['C'].set_ylim(0, np.max(normalized[np.argmin(np.abs(energies-meas_window[1])):]*1.1))
+    for i, (xpeak, ypeak) in enumerate(zip(xpeaks[order], ypeaks[order])):
+        c = 'r' if ypeaks[order][i]*main_peak_factor > ypeaks[order][0] else 'gray'
+        axd['C'].plot([xpeak, xpeak], [0, ypeak], '--', color=c, label=f'{xpeak:.2f} eV')
+    axd['C'].legend(loc='upper right', fontsize=8)
+    axd['C'].set_xlabel('Transition energy / eV')
+    axd['C'].set_ylabel('Normalized counts')
+    axd['C'].set_title('Normalized spectrum')
+
+    TRUNCATE = 20
+    id_peaks_trunc = id_peaks.iloc[:TRUNCATE]
+    axd['D'].set_title('Candidate signatures'+(f' (truncated, {TRUNCATE} of {len(id_peaks)})' if len(id_peaks) > TRUNCATE else ''))
+    axd['D'].sharex(axd['C'])
+    for i, (xpeak, ypeak) in enumerate(zip(xpeaks[order], ypeaks[order])):
+        c = 'r' if ypeaks[order][i]*main_peak_factor > ypeaks[order][0] else 'gray'
+        axd['D'].axvline(xpeak, linewidth=0.8, color=c, zorder=-1)
+    for j, (_, row) in enumerate(ntid.get_tabulated_exp(id_peaks_trunc).iterrows()):
+        for e in row.iloc[2:]:
+            if e > max(energies) or e < min(energies): continue
+            axd['D'].plot([e, e], [j, j+1], color='r', linewidth=3)
+    for j, (_, row) in enumerate(ntid.get_tabulated_th(id_peaks_trunc).iterrows()):
+        for e in row.iloc[2:]:
+            if e > max(energies) or e < min(energies): continue
+            axd['D'].plot([e, e], [j, j+1], color='k', linewidth=1)
+    axd['D'].set_yticks(
+        np.arange(len(id_peaks_trunc))+0.5,
+        [string_chirality(n,m) for _, (n,m) in id_peaks_trunc.iterrows()],
+        fontsize=8)
+    axd['D'].set_ylim([len(id_peaks_trunc), 0])
+
+    fig.suptitle(filename+'\n Laser calibration: '+os.path.basename(calibrationpath), fontsize=8)
+
+    if savepath is not None:
+        fig.savefig(savepath)
 
 #%%
-'''nice plot single file from full sensor data for publication'''
+# Make plot for a single file
 
-data_NT_path = 'C:/Users/sa/Documents/Data/NT spectra/Transfer/20230206_transfer/20230206_transfer/G050_A64_P45 2023-02-06 13_15_35.csv'
-# data_NT_path = 'Stock/20221024_stock/20221024_stock/G042_CMB42_NT8 2022-10-24 16_43_14.csv'
-filename = data_NT_path.split('/')[-1].split('.')[0]
-data_NT = np.genfromtxt(data_NT_path, delimiter=',').T
+plot_overview('../Growth/20230928_G55/P45_2s_G55_B79_NT7_2d962 2023-09-29 11_40_00.csv')
 
-normalize = False
-plot_full = False
-identify = False
-savefigure = False
+#%%
+# Make plot for all CSV in the folder and save in subfolder 'overview/'
 
-'''display parameters'''
-tick_size = 18
-axis_size= 25
-# label='(n,m)=(12,6)'
-
-'''integration region definition'''
-width_integration = 60
-start_roi_back, start_roi_NT = 100, 300
-ROI_back = (start_roi_back, start_roi_back + width_integration)
-ROI_NT = (start_roi_NT, start_roi_NT + width_integration)
-
-'''identifying parameters definition'''
-peak_width = 20
-delta_th, delta_exp = 0.1, 0.02
-main_peak_factor = 10
-
-lambdas_NT = data_NT[0][0:1340]
-
-if normalize:
-    assert lambdas_NT[0]==lambdas_laser[0], 'Laser spectrum window doesn\'t match the data spectrum window'
-
-energies = si.h*si.c/(lambdas_NT*1.e-9*si.e)
-intensities = np.array([data_NT[1][1340*i:1340*(i+1)] for i in range(len(data_NT[0])//1340)])
-
-if plot_full:
-    fig,ax = plt.subplots(figsize=(12,8))
-    ax.imshow(intensities)
-    plt.title('Full spectrum, not normalized')
-    plt.tight_layout()
-
-else:
-    fig,ax = plt.subplots(figsize=(12,8))
-    ax.set_xlabel('Energy [eV]', fontsize=axis_size)
-    d = np.sum(intensities[ROI_NT[0]:ROI_NT[1],:],axis=0) - np.sum(intensities[ROI_back[0]:ROI_back[1],:],axis=0)
-        
-    if not identify:   
-        if normalize:
-            ax.set_ylabel('Normalized intensity [a.u.]', fontsize=axis_size)
-            ax.plot(energies, d/intensities_laser, ms=3., c='k')
-        else:
-            ax.set_ylabel('Intensity [counts]', fontsize=axis_size)
-            ax.plot(energies, d, ms=3., c='k')
-            
-        # ax.legend(frameon=False, title=label, title_fontsize=axis_size)
-        plt.tick_params(axis='both', which='major', labelsize=tick_size)
-        plt.tight_layout()    
-        
-    else:
-        if normalize:
-            d = d/intensities_laser
-            
-        peaks_ind = find_peaks(d, width=peak_width)[0]
-        xpeaks, ypeaks = energies[peaks_ind], d[peaks_ind]
-        order = np.argsort(ypeaks)[::-1]
-        xpeaks_round = np.round(xpeaks,2)
-        id_peaks = ntid.ntid_exp(list_peaks=xpeaks_round[order], value_peaks = ypeaks[order], meas_window=[np.min(energies)+0.1,np.max(energies)-0.1], 
-                            delta_th=delta_th, delta_exp=delta_exp,main_peak_factor=main_peak_factor)
-        
-        for xpeak, ypeak in zip(xpeaks[order], ypeaks[order]):
-            ax.plot([xpeak, xpeak], [0, ypeak], 'r--', label='{:.2f} {}'.format(xpeak, 'eV'))
-            leg = ax.legend(title='Peaks positions:', handlelength=0, handletextpad=0, fancybox=True)
-            for item in leg.legendHandles:
-                item.set_visible(False)
-                
-        text_chiralities=''
-        for ch in id_peaks:
-            text_chiralities+=ntid.string_chirality(ch[0],ch[1])
-            
-        ax.set_title('Possible Chiralities: ' + text_chiralities)
-        ax.set_ylabel('Normalized intensity [a.u.]', fontsize=axis_size)
-        ax.plot(energies, d, ms=3., c='k') 
-        ax.legend(frameon=False)
-        plt.tick_params(axis='both', which='major', labelsize=tick_size)           
-        plt.tight_layout()
-    
-    if savefigure:
-        plt.savefig('/'.join(data_NT_path.split('/')[:-1]) + '/' + filename + '.png')
+folder = '../Growth/20240112_G57'
+if not os.path.exists(os.path.join(folder, 'overview')):
+    os.mkdir(os.path.join(folder, 'overview'))
+files = []
+for fname in os.listdir(folder):
+    if fname.endswith('.csv') and 'Roi' not in fname:
+        print(fname)
+        savepath = os.path.join(folder, 'overview', fname+'.png')
+        plot_overview(os.path.join(folder, fname), savepath=savepath)
+        plt.pause(0.1)
