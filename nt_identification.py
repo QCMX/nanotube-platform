@@ -17,6 +17,51 @@ data_exp_df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Ka
 data_kataura_df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kataura.csv'), sep=';')
 
 
+# Put both datasets into same format
+# Dataframe with columns: n, m, transition1, transition2, transition3, ...
+# transitions possibly nan
+def load_Kataura():
+    """Load data for Kataura plot from local file.
+
+    Needs __file__ variable for relative path, so doesn't work when calling
+    directly in interactive Python.
+    """
+    df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kataura.csv'), sep=';')
+    df = df[['n', 'm']+list(df.columns[6:])]
+    df.iloc[:,2:] = df.iloc[:,2:].map(lambda s: float(s.replace(',', '.')) if type(s)==str else s)
+    df = df.infer_objects()
+    df = df.sort_values('m').sort_values('n').reset_index(drop=True)
+    return df
+
+def load_KaihuiLiu():
+    """Load experimental CNT atlas from local file.
+
+    Needs __file__ variable for relative path, so doesn't work when calling
+    directly in interactive Python.
+    """
+    df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'References/Kaihui Liu.csv'), index_col=0)
+    df.columns = pd.to_numeric(df.columns)
+    data = []
+    for n, row in df.iterrows():
+        for nm, cell in row.items():
+            m = n - nm
+            if m < 0:
+                break
+            assert cell.startswith('[') and cell.endswith(']')
+            transitions = [
+                float(s) for s in cell.replace('[', '').replace(']', '').split(' ')
+                if s]
+            if len(transitions) == 0:
+                continue
+            data.append([n,m]+transitions)
+    maxntrans = max(len(l) for l in data) - 2
+    coln = ['n', 'm'] + ['transition%d'%d for d in range(maxntrans)]
+    return pd.DataFrame(data, columns=coln)
+
+datth = load_Kataura()
+datexp = load_KaihuiLiu()
+
+
 def read_exp_transitions(n,m):
     '''
     Reads the experimental values for a certain (n,m) chirality
@@ -98,9 +143,8 @@ def is_in_list(t, l, delta=0.05):
 
 
 def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
-    '''
-    Identifies possible chiralities for one or two peaks in table of
-    theoretical transitions by Kataura.
+    '''Selects chiralities from Kataura plot with transitions matching each
+    peak (or only the first if peak2 is None).
 
     Parameters
     ----------
@@ -140,7 +184,7 @@ def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
                 if np.round(np.abs(t-peak2),3)<=d2:
                     finalists[a] = (n,m)
             a+=1            
-        
+
         return list(finalists.values())
     return list(candidates.values())
 
@@ -148,7 +192,13 @@ def ntid2(peak1, peak2=None, d1=0.1, d2=0.1):
 def ntid_th(list_peaks, value_peaks, meas_window=[1.3,2.90], 
             delta=0.1, main_peak_factor=10):
     '''
-    Identifies possible chiralities for a given list of peaks in a fixed measurement window, based on kataura predictions
+    Identifies possible chiralities for a given list of peaks in
+    a fixed measurement window, based on Kataura predictions.
+
+    Uses only the first two peaks. Uses only the first peak if the second is
+    smaller than main_peak_factor compared to the first.
+
+    Requires no other peaks to be predicted in meas_window.
 
     Parameters
     ----------
@@ -172,15 +222,17 @@ def ntid_th(list_peaks, value_peaks, meas_window=[1.3,2.90],
         return finalists
     elif len(list_peaks)==1 or value_peaks[0]>main_peak_factor*value_peaks[1]:
         candidates = ntid2(list_peaks[0],d1=delta)
+        # Only accept candidate if all expected transitions match a peak in the data
         for cd in candidates:
             a=0
             for transition in read_kataura_transitions(cd[0],cd[1]):
-                if transition>=meas_window[0] and transition<=meas_window[1] and np.round(np.abs(transition-list_peaks[0]),3)>delta:
+                if transition>=meas_window[0] and transition<=meas_window[1] and np.abs(transition-list_peaks[0])>delta:
                     a=1
             if a==0:
                 finalists.append(cd)
-    elif len(list_peaks)>=2:
-        candidates = ntid2(peak1=list_peaks[0], peak2=list_peaks[1],d1=delta,d2=delta)
+    else:
+        candidates = ntid2(peak1=list_peaks[0], peak2=list_peaks[1], d1=delta, d2=delta)
+        # Only accept candidate if all transitions match a peak in the data
         for cd in candidates:
             a=0
             for transition in read_kataura_transitions(cd[0],cd[1]):
@@ -228,6 +280,8 @@ def ntid_exp(list_peaks, value_peaks, meas_window=[1.3,2.9],
     finalists=[]
        
     for cd in candidates:
+        # check that all expected transitions that are in measurement window
+        # also appear as peak in the data
         a=0
         list_transitions_exp = list(dict.fromkeys(read_exp_transitions(cd[0], cd[1])))
         for transition in list_transitions_exp:
@@ -240,6 +294,6 @@ def ntid_exp(list_peaks, value_peaks, meas_window=[1.3,2.9],
 
 def string_chirality(n,m):
     if (n-m)%3==0:
-        return('M({},{}); '.format(n,m))
+        return('M({},{})'.format(n,m))
     else:
-        return('S({},{}); '.format(n,m))
+        return('S({},{})'.format(n,m))
